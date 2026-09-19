@@ -1,0 +1,6 @@
+INIT 50 0.05
+ADD x
+ADD y
+ADD z
+CHECK x
+STATS

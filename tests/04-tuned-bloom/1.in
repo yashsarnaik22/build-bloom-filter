@@ -1,0 +1,7 @@
+INIT 100 0.01
+ADD apple
+ADD banana
+ADD cherry
+CHECK apple
+CHECK durian
+STATS

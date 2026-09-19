@@ -1,0 +1,13 @@
+INIT a 16 2
+INIT b 16 2
+ADD a x
+ADD a y
+ADD b y
+ADD b z
+UNION u a b
+POPCOUNT a
+POPCOUNT b
+POPCOUNT u
+BITS a
+BITS b
+BITS u

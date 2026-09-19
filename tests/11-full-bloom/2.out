@@ -1,0 +1,3 @@
+OK m=480 k=7
+BLOOM_MISS
+hits=0 misses=0 bloom_misses=1 bloom_fp=0

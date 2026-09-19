@@ -1,0 +1,9 @@
+INIT 64
+ADD apple
+ADD banana
+CHECK apple
+CHECK banana
+CHECK cherry
+REMOVE apple
+CHECK apple
+COUNT

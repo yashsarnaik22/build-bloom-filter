@@ -1,0 +1,15 @@
+INIT a 64 2
+INIT b 64 2
+ADD a foo
+ADD a bar
+ADD b bar
+ADD b baz
+UNION u a b
+INTERSECT i a b
+CHECK u foo
+CHECK u baz
+CHECK i bar
+POPCOUNT a
+POPCOUNT b
+POPCOUNT u
+POPCOUNT i

@@ -1,0 +1,7 @@
+INIT a 32 2
+ADD a one
+ADD a two
+CHECK a one
+CHECK a two
+CHECK a three
+POPCOUNT a

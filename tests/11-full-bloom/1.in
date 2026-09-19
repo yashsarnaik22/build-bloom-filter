@@ -1,0 +1,9 @@
+INIT 100 0.01
+PUT_CACHE u:42 alice
+PUT_CACHE u:99 bob
+GET u:42
+GET u:99
+GET u:absent
+INVALIDATE u:42
+GET u:42
+STATS

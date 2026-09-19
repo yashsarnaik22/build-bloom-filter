@@ -1,0 +1,13 @@
+INIT 10 0.1
+ADD a
+ADD b
+ADD c
+ADD d
+ADD e
+ADD f
+ADD g
+ADD h
+ADD i
+ADD j
+LOAD
+HEALTHY
