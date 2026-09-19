@@ -45,7 +45,7 @@ for raw in sys.stdin:
         pass
     elif cmd == "BITS":
         # TODO: output the bit array as a 64-character string
-        print(bits)
+        print(*bits, sep="")
         pass
 
 sys.stdout.write("\n".join(out) + "\n")
