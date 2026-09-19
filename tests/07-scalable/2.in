@@ -1,0 +1,6 @@
+INIT 10 0.1
+ADD x
+FILTERS
+TOTAL
+CHECK x
+CHECK absent

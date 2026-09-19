@@ -1,0 +1,6 @@
+INIT 100 0.01
+PUT_CACHE k v
+GET k
+GET k
+GET k
+STATS

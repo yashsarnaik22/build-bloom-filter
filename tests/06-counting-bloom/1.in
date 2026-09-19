@@ -1,0 +1,9 @@
+INIT 100 3
+ADD apple
+ADD apple
+CHECK apple
+REMOVE apple
+CHECK apple
+REMOVE apple
+CHECK apple
+REMOVE apple

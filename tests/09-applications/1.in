@@ -1,0 +1,6 @@
+INVALIDATE /api/user/42
+INVALIDATE /api/post/100
+CHECK_CACHE /api/user/42
+CHECK_CACHE /api/user/99
+CHECK_CACHE /api/post/100
+STATS

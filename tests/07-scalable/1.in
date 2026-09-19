@@ -1,0 +1,10 @@
+INIT 5 0.01
+ADD a
+ADD b
+ADD c
+ADD d
+ADD e
+ADD f
+CHECK a
+FILTERS
+TOTAL

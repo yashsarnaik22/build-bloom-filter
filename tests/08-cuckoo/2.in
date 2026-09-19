@@ -1,0 +1,6 @@
+INIT 32
+ADD a
+ADD b
+ADD c
+COUNT
+LOAD

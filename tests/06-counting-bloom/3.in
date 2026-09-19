@@ -1,0 +1,3 @@
+INIT 100 3
+REMOVE never_added
+CHECK never_added

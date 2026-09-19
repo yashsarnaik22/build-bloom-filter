@@ -1,0 +1,6 @@
+ADD apple
+ADD banana
+CHECK apple
+CHECK banana
+CHECK cherry
+BITS
