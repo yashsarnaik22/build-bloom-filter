@@ -73,10 +73,18 @@ for raw in sys.stdin:
         optimal(arg1, arg2)
         pass
     elif cmd == "FP":
-        print(math.trunc(fp(int(arg1), int(arg2), int(arg3))*1_000_000)/1_000_000)
+        # Calculate the raw false positive rate
+        fp_rate = fp(int(arg1), int(arg2), int(arg3))
+
+        # Print using an f-string formatted to exactly 6 decimal places
+        print(f"{fp_rate:.6f}")
         pass
     elif cmd == "BPI":
-        print((math.ceil(bpi(arg1)*10000))/10000)
+        # Calculate the raw BPI value
+        bpi_rate = bpi(float(arg1))
+
+        # Print with standard rounding to exactly 4 decimal places
+        print(f"{bpi_rate:.4f}")
         pass
 
 
