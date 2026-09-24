@@ -17,7 +17,6 @@ def h1(s):
 def h2(s):
     # TODO: return sum of (byte * (position+1)) mod m
     #   for "apple"  ->  97*1 + 112*2 + 112*3 + 108*4 + 101*5  mod 64
-    i = 0
     total_sum = 0
     for position, char_byte in enumerate(s.encode('utf-8')):
         total_sum += (char_byte * (position + 1))
@@ -37,6 +36,44 @@ def fp(m, n , k) :
 def bpi(target_fp):
     target_fp = float(target_fp)
     return -(math.log(target_fp)/(math.log(2)**2))
+
+# Kirsch-Mitzenmacher: derive K hashes from just TWO base hashes.
+#   h_i(x) = (h_a(x) + i * h_b(x)) mod m       for i = 0..k-1
+#
+# Base hashes (kept simple so you can hand-trace):
+#   h_a(s) = sum_i (byte_i * (i+1))   mask to 32 bits
+#   h_b(s) = sum_i (byte_i XOR (i+1)) mask to 32 bits
+#
+# Commands:
+#   HASH <s> <m> <k>   -> k positions, comma-separated, e.g. "94,19,44,69,94"
+#   HA   <s>           -> just h_a(s)
+#   HB   <s>           -> just h_b(s)
+
+def h_a(s): 
+    #TODO
+    total_sum = 0
+    for position, char_byte in enumerate(s.encode('utf-8')):
+        total_sum += (char_byte * (position + 1))
+    
+    return total_sum
+
+def h_b(s):
+    #TODO
+    total_sum = 0
+    for position, char_byte in enumerate(s.encode('utf-8')):
+        total_sum += (char_byte ^ (position + 1))
+    return total_sum
+
+def hash(s,m,k) :
+    m = int(m)
+    k = int(k) 
+    pos = []
+    h1 = h_a(s)
+    h2 = h_b(s)
+    for i in range(0,k)  :
+        pos.append((h1 + i*h2)%m)
+    return pos
+
 
 out = []
 for raw in sys.stdin:
@@ -85,6 +122,18 @@ for raw in sys.stdin:
 
         # Print with standard rounding to exactly 4 decimal places
         print(f"{bpi_rate:.4f}")
+        pass
+
+    elif cmd == "HASH":
+        #derive k positions and join with comma
+        bits = hash(arg1, arg2, arg3)
+        print(*bits, sep=",")
+        pass
+    elif cmd == "HA" :
+        print(h_a(arg1))
+        pass
+    elif cmd == "HB" : 
+        print(h_b(arg1))
         pass
 
 
