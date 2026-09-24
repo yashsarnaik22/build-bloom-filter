@@ -4,9 +4,12 @@ import math as math
 # A basic Bloom filter with two hand-computable hashes.
 # Parameters fixed: m = 64 bits, k = 2 hash functions.
 
-m = 64
-k = 2
-bits = [0] * m
+m = 0
+k = 0
+bits = []
+n_added = 0
+expected_n = 0
+load = 0
 
 def h1(s):
     # TODO: return sum of bytes mod m
@@ -24,10 +27,11 @@ def h2(s):
 def optimal(p, n):
     n = int(n)
     p = float(p)
-    m_opt = math.ceil((-n) * math.log(p) / (math.log(2)**2))
-    k_opt = round((m_opt/n) * math.log(2))
-    print(f"m={m_opt} k={k_opt}")
-    return
+
+    m_opt = math.ceil((-n) * math.log(p) / (math.log(2) ** 2))
+    k_opt = round((m_opt / n) * math.log(2))
+
+    return m_opt, k_opt
 
 def fp(m, n , k) :
 
@@ -64,15 +68,20 @@ def h_b(s):
         total_sum += (char_byte ^ (position + 1))
     return total_sum
 
-def hash(s,m,k) :
+def hash(s, m, k):
     m = int(m)
-    k = int(k) 
-    pos = []
-    h1 = h_a(s)
-    h2 = h_b(s)
-    for i in range(0,k)  :
-        pos.append((h1 + i*h2)%m)
-    return pos
+    k = int(k)
+
+    positions = []
+
+    ha = h_a(s)
+    hb = h_b(s)
+
+    for i in range(k):
+        pi = (ha + i * hb) % m
+        positions.append(pi)
+
+    return positions
 
 
 out = []
@@ -89,16 +98,24 @@ for raw in sys.stdin:
     arg3 = parts[3] if len(parts) > 3 else ""
 
     if cmd == "ADD":
-        # TODO: set bits[h1(arg)] and bits[h2(arg)] to 1, then output "OK"
-        bits[h1(arg1)] = 1
-        bits[h2(arg1)] = 1
+        pos = hash(arg1, m, k)
+
+        for pi in pos:
+            bits[pi] = 1
+
+        n_added += 1
+        load = n_added / expected_n
+
         print("OK")
         pass
     elif cmd == "CHECK":
-        # TODO: if BOTH bits are 1, output "MAYBE"; otherwise output "NO"
-        if(bits[h1(arg1)] == 1 and bits[h2(arg1)] == 1):
+        # TODO: if all bits are 1, output "MAYBE"; otherwise output "NO"
+        pos = hash(arg1, m, k)
+
+        if all(bits[pi] == 1 for pi in pos):
             print("MAYBE")
-        else: print("NO")
+        else:
+            print("NO")
         pass
     elif cmd == "BITS":
         # TODO: output the bit array as a 64-character string
@@ -107,7 +124,8 @@ for raw in sys.stdin:
     elif cmd == "OPTIMAL":
         # print("fp" ,arg1, sep="")
         # print("n:",arg2)
-        optimal(arg1, arg2)
+        m,k = optimal(arg1, arg2)
+        print(f"m={m} k={k}")
         pass
     elif cmd == "FP":
         # Calculate the raw false positive rate
@@ -126,14 +144,29 @@ for raw in sys.stdin:
 
     elif cmd == "HASH":
         #derive k positions and join with comma
-        bits = hash(arg1, arg2, arg3)
-        print(*bits, sep=",")
+        pos = hash(arg1, arg2, arg3)
+        print(*pos, sep=",")
         pass
     elif cmd == "HA" :
         print(h_a(arg1))
         pass
     elif cmd == "HB" : 
         print(h_b(arg1))
+        pass
+    elif cmd == "INIT":
+        expected_n = int(arg1)
+
+        m, k = optimal(arg2, arg1)
+
+        bits = [0] * m
+
+        n_added = 0
+        load = 0
+
+        print(f"OK m={m} k={k}")
+        pass
+    elif cmd =="STATS":
+        print(f"m={m} k={k} n={n_added} load={load:.4f}")
         pass
 
 
