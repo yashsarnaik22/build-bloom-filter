@@ -7,6 +7,10 @@ import math as math
 m = 0
 k = 0
 bits = []
+a = []
+b = []
+u = []
+i = []
 n_added = 0
 expected_n = 0
 load = 0
@@ -53,37 +57,59 @@ def bpi(target_fp):
 #   HA   <s>           -> just h_a(s)
 #   HB   <s>           -> just h_b(s)
 
-def h_a(s): 
-    #TODO
-    total_sum = 0
-    for position, char_byte in enumerate(s.encode('utf-8')):
-        total_sum += (char_byte * (position + 1))
+
+def h_a(s): return sum(b * (i + 1) for i, b in enumerate(s.encode())) & 0xFFFFFFFF 
+    # total_sum = 0
+    # for position, char_byte in enumerate(s.encode('utf-8')):
+    #     total_sum += (char_byte * (position + 1))
     
-    return total_sum
+    # return total_sum
 
-def h_b(s):
-    #TODO
-    total_sum = 0
-    for position, char_byte in enumerate(s.encode('utf-8')):
-        total_sum += (char_byte ^ (position + 1))
-    return total_sum
+def h_b(s): return sum(b ^ (i + 1) for i, b in enumerate(s.encode())) & 0xFFFFFFFF
+    # total_sum = 0
+    # for position, char_byte in enumerate(s.encode('utf-8')):
+    #     total_sum += (char_byte ^ (position + 1))
+    # return total_sum
 
-def hash(s, m, k):
-    m = int(m)
-    k = int(k)
+def positions(s, m, k):
+    return [(h_a(s) + i * h_b(s)) % m for i in range(k)]
+    # m = int(m)
+    # k = int(k)
 
-    positions = []
+    # positions = []
 
-    ha = h_a(s)
-    hb = h_b(s)
+    # ha = h_a(s)
+    # hb = h_b(s)
 
-    for i in range(k):
-        pi = (ha + i * hb) % m
-        positions.append(pi)
+    # for i in range(k):
+    #     pi = (ha + i * hb) % m
+    #     positions.append(pi)
 
-    return positions
+    # return positions
 
 
+# Bloom filters compose elegantly under bitwise operations
+# (only when m, k, and the hash family are IDENTICAL).
+#
+#   UNION(A, B)         = A | B          # exact: matches "in A or in B"
+#   INTERSECT(A, B)     = A & B          # APPROXIMATE: matches "probably in A AND probably in B"
+#                                         # FP rate of intersection is HIGHER than each operand.
+#
+# Commands:
+#   INIT <name> <m> <k>                  -> "OK"
+#   ADD <name> <string>                  -> "OK"
+#   CHECK <name> <string>                -> "MAYBE"|"NO"
+#   UNION <out> <a> <b>                  -> "OK"   (bitwise OR of bit arrays)
+#   INTERSECT <out> <a> <b>              -> "OK"   (bitwise AND of bit arrays)
+#   POPCOUNT <name>                      -> total bits set
+#   BITS <name>                          -> the bit array as a "0101..." string
+
+def union(u, a, b) :
+    filters[u] = [x|y for x,y in zip(a,b)]
+def intersection(i, a, b) : 
+    filters[i] = [x & y for x, y in zip(a, b)]
+
+filters = {}  # name -> (m, k, bits)
 out = []
 for raw in sys.stdin:
     line = raw.rstrip("\n")
@@ -98,13 +124,14 @@ for raw in sys.stdin:
     arg3 = parts[3] if len(parts) > 3 else ""
 
     if cmd == "ADD":
-        pos = hash(arg1, m, k)
+        se = filters[arg1] 
+        pos = positions(arg2, m, k)
 
         for pi in pos:
-            bits[pi] = 1
+            se[pi] = 1
 
-        n_added += 1
-        load = n_added / expected_n
+        # n_added += 1
+        # load = n_added / expected_n
 
         print("OK")
         pass
@@ -118,8 +145,8 @@ for raw in sys.stdin:
             print("NO")
         pass
     elif cmd == "BITS":
-        # TODO: output the bit array as a 64-character string
-        print(*bits, sep="")
+        name = filters[arg1]
+        print(*name, sep="")
         pass
     elif cmd == "OPTIMAL":
         # print("fp" ,arg1, sep="")
@@ -154,20 +181,35 @@ for raw in sys.stdin:
         print(h_b(arg1))
         pass
     elif cmd == "INIT":
-        expected_n = int(arg1)
-
-        m, k = optimal(arg2, arg1)
-
-        bits = [0] * m
-
+        # expected_n = int(arg1)
+        m = int(arg2)
+        k = int(arg3)
+        filters[arg1] = [0] * m
         n_added = 0
         load = 0
 
-        print(f"OK m={m} k={k}")
+        print("OK")
         pass
     elif cmd =="STATS":
         print(f"m={m} k={k} n={n_added} load={load:.4f}")
         pass
-
-
+    elif cmd =="UNION":
+        filters[arg1] = [0]*m
+        union(arg1, filters[arg2], filters[arg3])
+        print("OK")
+        pass
+    elif cmd=="INTERSECT":
+        intersection(arg1, filters[arg2], filters[arg3])
+        print("OK")
+        pass
+    
+    elif cmd == "POPCOUNT":
+        name = arg1
+        print(sum(filters[name]))
+        pass
+ #to implement  --
+ # -union/intersection
+ # - counting bloom filter
+ # - scalable bloom filter
+ # - Cuckoo filter
 sys.stdout.write("\n".join(out) + "\n")
