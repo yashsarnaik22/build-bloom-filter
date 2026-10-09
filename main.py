@@ -112,8 +112,64 @@ def intersection(i, a, b) :
 
 def bloom_positions(s, m):
     return [h1(s), h2(s)]
+filters = {}
 
-filters = {}  # name -> (m, k, bits)
+def get_filter(name):
+    return filters.get(name)
+
+def compatible(a, b):
+    return a["m"] == b["m"] and a["k"] == b["k"]
+
+def add(name, s):
+    f = get_filter(name)
+    if f is None:
+        print("ERR NOFILTER")
+        return
+
+    for p in positions(s, f["m"], f["k"]):
+        f["bits"][p] = 1
+    print("OK")
+
+def check(name, s):
+    f = get_filter(name)
+    if f is None:
+        print("ERR NOFILTER")
+        return
+
+    pos = positions(s, f["m"], f["k"])
+    print("MAYBE" if all(f["bits"][p] for p in pos) else "NO")
+
+def combine(out_name, a_name, b_name, operation):
+    a = get_filter(a_name)
+    b = get_filter(b_name)
+
+    if a is None or b is None:
+        print("ERR NOFILTER")
+        return
+
+    if not compatible(a, b):
+        print("ERR MISMATCH")
+        return
+
+    if operation == "UNION":
+        bits = [x | y for x, y in zip(a["bits"], b["bits"])]
+    else:
+        bits = [x & y for x, y in zip(a["bits"], b["bits"])]
+
+    filters[out_name] = {
+        "m": a["m"],
+        "k": a["k"],
+        "bits": bits
+    }
+    print("OK")
+
+def popcount(name):
+    f = get_filter(name)
+    if f is None:
+        print("ERR NOFILTER")
+        return
+    print(sum(f["bits"]))
+
 out = []
 for raw in sys.stdin:
     line = raw.rstrip("\n")
@@ -127,33 +183,40 @@ for raw in sys.stdin:
     arg2 = parts[2] if len(parts) > 2 else ""
     arg3 = parts[3] if len(parts) > 3 else ""
 
-    if cmd == "ADD":
-        se = filters[arg1]
-        pos = bloom_positions(arg2, m)
-
-        for pi in pos:
-            se[pi] = 1
-
-        # n_added += 1
-        # load = n_added / expected_n
-
-        print("OK")
-        pass
-    elif cmd == "CHECK":
+    
+    if cmd == "INIT":
         name = arg1
-        s = arg2
+        m_value = int(arg2)
+        k_value = int(arg3)
 
-        bits = filters[name]
-        pos = bloom_positions(s, m)
+        filters[name] = {
+            "m": m_value,
+            "k": k_value,
+            "bits": [0] * m_value
+        }
+        print("OK")
 
-        if all(bits[pi] == 1 for pi in pos):
-            print("MAYBE")
-        else:
-            print("NO")
+    elif cmd == "ADD":
+        add(arg1, arg2)
+
+    elif cmd == "CHECK":
+        check(arg1, arg2)
+
+    elif cmd == "UNION":
+        combine(arg1, arg2, arg3, "UNION")
+
+    elif cmd == "INTERSECT":
+        combine(arg1, arg2, arg3, "INTERSECT")
+
+    elif cmd == "POPCOUNT":
+        popcount(arg1)
+
     elif cmd == "BITS":
-        name = filters[arg1]
-        print(*name, sep="")
-        pass
+        f = get_filter(arg1)
+        if f is None:
+            print("ERR NOFILTER")
+        else:
+            print("".join(map(str, f["bits"])))
     elif cmd == "OPTIMAL":
         # print("fp" ,arg1, sep="")
         # print("n:",arg2)
@@ -163,7 +226,6 @@ for raw in sys.stdin:
     elif cmd == "FP":
         # Calculate the raw false positive rate
         fp_rate = fp(int(arg1), int(arg2), int(arg3))
-
         # Print using an f-string formatted to exactly 6 decimal places
         print(f"{fp_rate:.6f}")
         pass
@@ -174,7 +236,6 @@ for raw in sys.stdin:
         # Print with standard rounding to exactly 4 decimal places
         print(f"{bpi_rate:.4f}")
         pass
-
     elif cmd == "HASH":
         #derive k positions and join with comma
         pos = hash(arg1, arg2, arg3)
@@ -186,32 +247,8 @@ for raw in sys.stdin:
     elif cmd == "HB" : 
         print(h_b(arg1))
         pass
-    elif cmd == "INIT":
-        # expected_n = int(arg1)
-        m = int(arg2)
-        k = int(arg3)
-        filters[arg1] = [0] * m
-        n_added = 0
-        load = 0
-
-        print("OK")
-        pass
     elif cmd =="STATS":
         print(f"m={m} k={k} n={n_added} load={load:.4f}")
-        pass
-    elif cmd =="UNION":
-        filters[arg1] = [0]*m
-        union(arg1, filters[arg2], filters[arg3])
-        print("OK")
-        pass
-    elif cmd=="INTERSECT":
-        intersection(arg1, filters[arg2], filters[arg3])
-        print("OK")
-        pass
-    
-    elif cmd == "POPCOUNT":
-        name = arg1
-        print(sum(filters[name]))
         pass
  #to implement  --
  # -union/intersection
