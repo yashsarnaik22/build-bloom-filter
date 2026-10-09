@@ -136,14 +136,16 @@ for raw in sys.stdin:
         print("OK")
         pass
     elif cmd == "CHECK":
-        # TODO: if all bits are 1, output "MAYBE"; otherwise output "NO"
-        pos = hash(arg1, m, k)
+        name = arg1
+        s = arg2
+
+        bits = filters[name]
+        pos = positions(s, m, k)
 
         if all(bits[pi] == 1 for pi in pos):
             print("MAYBE")
         else:
             print("NO")
-        pass
     elif cmd == "BITS":
         name = filters[arg1]
         print(*name, sep="")
