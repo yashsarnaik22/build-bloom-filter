@@ -109,6 +109,10 @@ def union(u, a, b) :
 def intersection(i, a, b) : 
     filters[i] = [x & y for x, y in zip(a, b)]
 
+
+def bloom_positions(s, m):
+    return [h1(s), h2(s)]
+
 filters = {}  # name -> (m, k, bits)
 out = []
 for raw in sys.stdin:
@@ -124,8 +128,8 @@ for raw in sys.stdin:
     arg3 = parts[3] if len(parts) > 3 else ""
 
     if cmd == "ADD":
-        se = filters[arg1] 
-        pos = positions(arg2, m, k)
+        se = filters[arg1]
+        pos = bloom_positions(arg2, m)
 
         for pi in pos:
             se[pi] = 1
@@ -140,7 +144,7 @@ for raw in sys.stdin:
         s = arg2
 
         bits = filters[name]
-        pos = positions(s, m, k)
+        pos = bloom_positions(s, m)
 
         if all(bits[pi] == 1 for pi in pos):
             print("MAYBE")
