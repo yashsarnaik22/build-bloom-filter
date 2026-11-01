@@ -1,29 +1,16 @@
 import sys
+import math
 
-# Bloom filters compose elegantly under bitwise operations
-# (only when m, k, and the hash family are IDENTICAL).
-#
-#   UNION(A, B)         = A | B          # exact: matches "in A or in B"
-#   INTERSECT(A, B)     = A & B          # APPROXIMATE: matches "probably in A AND probably in B"
-#                                         # FP rate of intersection is HIGHER than each operand.
-#
-# Commands:
-#   INIT <name> <m> <k>                  -> "OK"
-#   ADD <name> <string>                  -> "OK"
-#   CHECK <name> <string>                -> "MAYBE"|"NO"
-#   UNION <out> <a> <b>                  -> "OK"   (bitwise OR of bit arrays)
-#   INTERSECT <out> <a> <b>              -> "OK"   (bitwise AND of bit arrays)
-#   POPCOUNT <name>                      -> total bits set
-#   BITS <name>                          -> the bit array as a "0101..." string
-#   ESTIMATE <name>                      -> estimated number of distinct keys
+# Scalable Bloom filter commands:
+#   INIT <capacity> <target-error>
+#   ADD <key>, CHECK <key>
+#   FILTERS, TOTAL, SHAPE, COMPOUND
 
-table = []
-m = 0
-k = 0
+filters = []
+total = 0
 out = []
 
 MASK32 = 0xFFFFFFFF
-MAXC = 15
 
 def rotl32(value, amount):
     value &= MASK32
@@ -78,8 +65,29 @@ def argument_after_command(line):
         i += 1
     return line[i + 1:] if i < len(line) else ""
 
-def key_positions(key):
-    return positions(key, m, k)
+def size_filter(capacity, target):
+    m = math.ceil(-capacity * math.log(target) / (math.log(2) ** 2))
+    k = max(1, round((m / capacity) * math.log(2)))
+    return m, k
+
+def make_filter(capacity, target):
+    m, k = size_filter(capacity, target)
+    return {
+        "capacity": capacity,
+        "target": target,
+        "m": m,
+        "k": k,
+        "bits": [0] * m,
+        "count": 0,
+    }
+
+def add_to_filter(filter_state, key):
+    for p in positions(key, filter_state["m"], filter_state["k"]):
+        filter_state["bits"][p] = 1
+
+def contains_in_filter(filter_state, key):
+    bits = filter_state["bits"]
+    return all(bits[p] for p in positions(key, filter_state["m"], filter_state["k"]))
 
 
 for raw in sys.stdin:
@@ -95,56 +103,56 @@ for raw in sys.stdin:
         if len(args) != 3:
             continue
 
-        m = int(args[1])
-        k = int(args[2])
-
-        if m <= 0 or k <= 0:
+        capacity = int(args[1])
+        target = float(args[2])
+        if capacity <= 0 or not 0 < target < 1:
             continue
 
-        table = [0] * m
-        out.append("OK")
+        filters = [make_filter(capacity, target)]
+        total = 0
+        newest = filters[0]
+        out.append(f"OK m={newest['m']} k={newest['k']}")
 
     elif cmd == "ADD":
-        if not table:
+        if not filters:
             continue
 
         key = argument_after_command(line)
-        for p in key_positions(key):
-            table[p] = min(table[p] + 1, 15)
+        newest = filters[-1]
+        if newest["count"] >= newest["capacity"]:
+            filters.append(make_filter(newest["capacity"] * 2, newest["target"] * 0.5))
+            newest = filters[-1]
+        add_to_filter(newest, key)
+        newest["count"] += 1
+        total += 1
 
         out.append("OK")
 
     elif cmd == "CHECK":
-        if not table:
+        if not filters:
             continue
 
         key = argument_after_command(line)
-        out.append("MAYBE" if all(table[p] > 0 for p in key_positions(key)) else "NO")
+        out.append("MAYBE" if any(contains_in_filter(f, key) for f in reversed(filters)) else "NO")
 
-    elif cmd == "REMOVE":
-        if not table:
-            continue
+    elif cmd == "FILTERS":
+        out.append(str(len(filters)))
 
-        key = argument_after_command(line)
-        pos = key_positions(key)
-        if any(table[p] == 0 for p in pos):
-            out.append("WAS_ABSENT")
-            continue
+    elif cmd == "TOTAL":
+        out.append(str(total))
 
-        for p in pos:
-            if table[p] < 15:
-                table[p] -= 1
-        out.append("OK")
+    elif cmd == "SHAPE":
+        for filter_state in filters:
+            out.append(
+                f"m={filter_state['m']} k={filter_state['k']} "
+                f"cap={filter_state['capacity']} n={filter_state['count']}"
+            )
 
-    elif cmd == "COUNT":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        out.append(str(min(table[p] for p in key_positions(key))))
-
-    elif cmd == "DUMP":
-        if table:
-            out.append("".join(format(value, "x") for value in table))
+    elif cmd == "COMPOUND":
+        probability_not_found = 1.0
+        for filter_state in filters:
+            p = filter_state["target"]
+            probability_not_found *= 1.0 - p
+        out.append(f"{1.0 - probability_not_found:.6f}")
 
 sys.stdout.write("\n".join(out) + ("\n" if out else ""))
