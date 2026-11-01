@@ -21,11 +21,48 @@ import math
 filters = {}  # name -> (m, k, bits)
 out = []
 
+MASK32 = 0xFFFFFFFF
+
+def rotl32(value, amount):
+    value &= MASK32
+    return ((value << amount) | (value >> (32 - amount))) & MASK32
+
+def murmur3_32(s, seed):
+    data = s.encode()
+    h = seed & MASK32
+    c1 = 0xCC9E2D51
+    c2 = 0x1B873593
+
+    for offset in range(0, len(data) - len(data) % 4, 4):
+        block = int.from_bytes(data[offset:offset + 4], "little")
+        block = (block * c1) & MASK32
+        block = rotl32(block, 15)
+        block = (block * c2) & MASK32
+        h ^= block
+        h = rotl32(h, 13)
+        h = (h * 5 + 0xE6546B64) & MASK32
+
+    tail = data[len(data) - len(data) % 4:]
+    if tail:
+        block = int.from_bytes(tail, "little")
+        block = (block * c1) & MASK32
+        block = rotl32(block, 15)
+        block = (block * c2) & MASK32
+        h ^= block
+
+    h ^= len(data)
+    h ^= h >> 16
+    h = (h * 0x85EBCA6B) & MASK32
+    h ^= h >> 13
+    h = (h * 0xC2B2AE35) & MASK32
+    h ^= h >> 16
+    return h & MASK32
+
 def h_a(s):
-    return sum(b * (i + 1) for i, b in enumerate(s.encode())) & 0xFFFFFFFF
+    return murmur3_32(s, 0)
 
 def h_b(s):
-    return sum(b ^ (i + 1) for i, b in enumerate(s.encode())) & 0xFFFFFFFF
+    return murmur3_32(s, 0x9747B28C)
 
 def positions(s, m, k):
     return [(h_a(s) + i * h_b(s)) % m for i in range(k)]
