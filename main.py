@@ -1,29 +1,12 @@
 import sys
 
-# Bloom filters compose elegantly under bitwise operations
-# (only when m, k, and the hash family are IDENTICAL).
-#
-#   UNION(A, B)         = A | B          # exact: matches "in A or in B"
-#   INTERSECT(A, B)     = A & B          # APPROXIMATE: matches "probably in A AND probably in B"
-#                                         # FP rate of intersection is HIGHER than each operand.
-#
-# Commands:
-#   INIT <name> <m> <k>                  -> "OK"
-#   ADD <name> <string>                  -> "OK"
-#   CHECK <name> <string>                -> "MAYBE"|"NO"
-#   UNION <out> <a> <b>                  -> "OK"   (bitwise OR of bit arrays)
-#   INTERSECT <out> <a> <b>              -> "OK"   (bitwise AND of bit arrays)
-#   POPCOUNT <name>                      -> total bits set
-#   BITS <name>                          -> the bit array as a "0101..." string
-#   ESTIMATE <name>                      -> estimated number of distinct keys
-
-table = []
-m = 0
-k = 0
+# Cuckoo filter: buckets contain four 8-bit fingerprints each.
+buckets = []
 out = []
 
 MASK32 = 0xFFFFFFFF
-MAXC = 15
+SLOTS_PER_BUCKET = 4
+MAX_KICKS = 500
 
 def rotl32(value, amount):
     value &= MASK32
@@ -78,8 +61,65 @@ def argument_after_command(line):
         i += 1
     return line[i + 1:] if i < len(line) else ""
 
-def key_positions(key):
-    return positions(key, m, k)
+def fingerprint_and_buckets(key):
+    fingerprint = h_b(key) & 0xFF
+    if fingerprint == 0:
+        fingerprint = 1
+    first = h_a(key) & (len(buckets) - 1)
+    second = alternate_bucket(first, fingerprint)
+    return fingerprint, first, second
+
+def alternate_bucket(index, fingerprint):
+    displacement = (fingerprint * 0x5BD1E995) % len(buckets)
+    return index ^ displacement
+
+def first_empty_slot(bucket):
+    for slot, value in enumerate(bucket):
+        if value == 0:
+            return slot
+    return None
+
+def insert_fingerprint(fingerprint, first, second):
+    for index in (first, second):
+        slot = first_empty_slot(buckets[index])
+        if slot is not None:
+            buckets[index][slot] = fingerprint
+            return True
+
+    # Save the table so a failed 500-kick insertion can be rolled back exactly.
+    before = [bucket[:] for bucket in buckets]
+    current_bucket = first
+    current = fingerprint
+
+    for kick in range(MAX_KICKS):
+        slot = kick % SLOTS_PER_BUCKET
+        evicted = buckets[current_bucket][slot]
+        buckets[current_bucket][slot] = current
+        current = evicted
+
+        current_bucket = alternate_bucket(current_bucket, current)
+        empty_slot = first_empty_slot(buckets[current_bucket])
+        if empty_slot is not None:
+            buckets[current_bucket][empty_slot] = current
+            return True
+
+    buckets[:] = before
+    return False
+
+
+def contains_fingerprint(fingerprint, first, second):
+    return fingerprint in buckets[first] or fingerprint in buckets[second]
+
+
+def remove_fingerprint(fingerprint, first, second):
+    for index in (first, second):
+        try:
+            slot = buckets[index].index(fingerprint)
+        except ValueError:
+            continue
+        buckets[index][slot] = 0
+        return True
+    return False
 
 
 for raw in sys.stdin:
@@ -92,59 +132,47 @@ for raw in sys.stdin:
 
     if cmd == "INIT":
         args = line.split()
-        if len(args) != 3:
+        if len(args) != 2:
             continue
 
-        m = int(args[1])
-        k = int(args[2])
-
-        if m <= 0 or k <= 0:
+        bucket_count = int(args[1])
+        if bucket_count <= 0 or bucket_count & (bucket_count - 1):
+            out.append("ERR BUCKETS")
             continue
 
-        table = [0] * m
-        out.append("OK")
+        buckets = [[0] * SLOTS_PER_BUCKET for _ in range(bucket_count)]
+        out.append(f"OK buckets={bucket_count} slots={bucket_count * SLOTS_PER_BUCKET}")
 
-    elif cmd == "ADD":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        for p in key_positions(key):
-            table[p] = min(table[p] + 1, 15)
-
-        out.append("OK")
-
-    elif cmd == "CHECK":
-        if not table:
+    elif cmd in ("ADD", "CHECK", "REMOVE", "FP", "POSITIONS"):
+        if not buckets:
             continue
 
         key = argument_after_command(line)
-        out.append("MAYBE" if all(table[p] > 0 for p in key_positions(key)) else "NO")
+        fingerprint, first, second = fingerprint_and_buckets(key)
 
-    elif cmd == "REMOVE":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        pos = key_positions(key)
-        if any(table[p] == 0 for p in pos):
-            out.append("WAS_ABSENT")
-            continue
-
-        for p in pos:
-            if table[p] < 15:
-                table[p] -= 1
-        out.append("OK")
+        if cmd == "ADD":
+            out.append("OK" if insert_fingerprint(fingerprint, first, second) else "FULL")
+        elif cmd == "CHECK":
+            out.append("MAYBE" if contains_fingerprint(fingerprint, first, second) else "NO")
+        elif cmd == "REMOVE":
+            out.append("OK" if remove_fingerprint(fingerprint, first, second) else "WAS_ABSENT")
+        elif cmd == "FP":
+            out.append(str(fingerprint))
+        else:  # POSITIONS
+            out.append(f"fp={fingerprint} i1={first} i2={second}")
 
     elif cmd == "COUNT":
-        if not table:
-            continue
+        if buckets:
+            out.append(str(sum(value != 0 for bucket in buckets for value in bucket)))
 
-        key = argument_after_command(line)
-        out.append(str(min(table[p] for p in key_positions(key))))
+    elif cmd == "LOAD":
+        if buckets:
+            occupied = sum(value != 0 for bucket in buckets for value in bucket)
+            capacity = len(buckets) * SLOTS_PER_BUCKET
+            out.append(f"{occupied / capacity:.4f}")
 
     elif cmd == "DUMP":
-        if table:
-            out.append("".join(format(value, "x") for value in table))
+        if buckets:
+            out.append("".join(format(value, "02x") for bucket in buckets for value in bucket))
 
 sys.stdout.write("\n".join(out) + ("\n" if out else ""))
