@@ -1,28 +1,30 @@
 import math
 import sys
 
-MASK32 = 0xFFFFFFFF
-LN2 = 0.6931471805599453
-LN2SQ = 0.4804530139182014
-MAX_FILTER_BYTES = 36000
-MAX_HASHES = 50
-SEED_STEP = 0xFBA4C795
 
-filter_bytes = bytearray()
+MASK32 = 0xFFFFFFFF
+LN2 = math.log(2.0)
+LN2_SQUARED = LN2 * LN2
+
+bit_count = 0
 hash_count = 0
-tweak = 0
-flags = 0
+bits = bytearray()
+cache = {}
+hits = 0
+misses = 0
+bloom_misses = 0
+bloom_fp = 0
 out = []
 
 
-def rotl32(value, amount):
+def rotate_left_32(value, amount):
     value &= MASK32
     return ((value << amount) | (value >> (32 - amount))) & MASK32
 
 
-def murmur3_32(data, seed):
-    """MurmurHash3 x86_32 over bytes, with all arithmetic kept to 32 bits."""
-    h = seed & MASK32
+def murmur3_32(value, seed):
+    data = value.encode("utf-8")
+    result = seed & MASK32
     c1 = 0xCC9E2D51
     c2 = 0x1B873593
 
@@ -30,74 +32,51 @@ def murmur3_32(data, seed):
     for offset in range(0, complete_length, 4):
         block = int.from_bytes(data[offset:offset + 4], "little")
         block = (block * c1) & MASK32
-        block = rotl32(block, 15)
+        block = rotate_left_32(block, 15)
         block = (block * c2) & MASK32
-        h ^= block
-        h = rotl32(h, 13)
-        h = (h * 5 + 0xE6546B64) & MASK32
+        result ^= block
+        result = rotate_left_32(result, 13)
+        result = (result * 5 + 0xE6546B64) & MASK32
 
     tail = data[complete_length:]
     if tail:
         block = int.from_bytes(tail, "little")
         block = (block * c1) & MASK32
-        block = rotl32(block, 15)
+        block = rotate_left_32(block, 15)
         block = (block * c2) & MASK32
-        h ^= block
+        result ^= block
 
-    h ^= len(data)
-    h ^= h >> 16
-    h = (h * 0x85EBCA6B) & MASK32
-    h ^= h >> 13
-    h = (h * 0xC2B2AE35) & MASK32
-    h ^= h >> 16
-    return h & MASK32
+    result ^= len(data)
+    result ^= result >> 16
+    result = (result * 0x85EBCA6B) & MASK32
+    result ^= result >> 13
+    result = (result * 0xC2B2AE35) & MASK32
+    result ^= result >> 16
+    return result & MASK32
 
 
-def indexes(element):
-    bit_count = len(filter_bytes) * 8
-    if bit_count == 0:
+def positions(value):
+    if bit_count <= 0:
         return []
-
-    result = []
-    for i in range(hash_count):
-        seed = (i * SEED_STEP + tweak) & MASK32
-        result.append(murmur3_32(element, seed) % bit_count)
-    return result
-
-
-def insert(element):
-    for bit_index in indexes(element):
-        filter_bytes[bit_index // 8] |= 1 << (bit_index % 8)
+    first_hash = murmur3_32(value, 0)
+    second_hash = murmur3_32(value, 0x9747B28C)
+    return [
+        (first_hash + index * second_hash) % bit_count
+        for index in range(hash_count)
+    ]
 
 
-def contains(element):
-    return all(
-        filter_bytes[bit_index // 8] & (1 << (bit_index % 8))
-        for bit_index in indexes(element)
-    )
+def insert(value):
+    for position in positions(value):
+        bits[position] = 1
 
 
-def compact_size(value):
-    if value < 253:
-        return bytes((value,))
-    return b"\xfd" + value.to_bytes(2, "little")
+def contains(value):
+    return all(bits[position] for position in positions(value))
 
 
-def filterload_payload():
-    return (
-        compact_size(len(filter_bytes))
-        + bytes(filter_bytes)
-        + hash_count.to_bytes(4, "little")
-        + tweak.to_bytes(4, "little")
-        + bytes((flags,))
-    )
-
-
-def element_after_command(line):
-    command_end = 0
-    while command_end < len(line) and not line[command_end].isspace():
-        command_end += 1
-    return bytes.fromhex(line[command_end:].strip()) if command_end < len(line) else b""
+def current_fill():
+    return sum(bits) / bit_count if bit_count else 0.0
 
 
 for raw in sys.stdin:
@@ -105,41 +84,64 @@ for raw in sys.stdin:
     if not line.strip():
         continue
 
-    parts = line.split()
+    parts = line.split(maxsplit=2)
     command = parts[0]
 
-    if command == "INIT":
-        if len(parts) != 5:
+    if command == "INIT" and len(parts) >= 3:
+        expected_items = int(parts[1])
+        target_fp = float(parts[2])
+        if expected_items <= 0 or not 0.0 < target_fp < 1.0:
             continue
 
-        n = int(parts[1])
-        error_rate = float(parts[2])
-        tweak = int(parts[3]) & MASK32
-        flags = int(parts[4]) & 0xFF
-
-        bit_count = min(
-            math.trunc((-1.0 / LN2SQ) * n * math.log(error_rate)),
-            MAX_FILTER_BYTES * 8,
+        bit_count = math.ceil(
+            -expected_items * math.log(target_fp) / LN2_SQUARED
         )
-        byte_count = bit_count // 8
-        hash_count = min(
-            math.trunc(((byte_count * 8) // n) * LN2),
-            MAX_HASHES,
-        )
-        filter_bytes = bytearray(byte_count)
-        out.append(f"OK bytes={byte_count} hashes={hash_count}")
+        hash_count = max(1, round((bit_count / expected_items) * LN2))
+        bits = bytearray(bit_count)
+        cache = {}
+        hits = 0
+        misses = 0
+        bloom_misses = 0
+        bloom_fp = 0
+        out.append(f"OK m={bit_count} k={hash_count}")
 
-    elif command in ("INSERT", "CONTAINS", "INDEXES"):
-        element = element_after_command(line)
-        if command == "INSERT":
-            insert(element)
-            out.append("OK")
-        elif command == "CONTAINS":
-            out.append("MAYBE" if contains(element) else "NO")
+    elif command == "PUT_CACHE" and len(parts) >= 2:
+        key = parts[1]
+        value = parts[2] if len(parts) > 2 else ""
+        cache[key] = value
+        insert(key)
+        out.append("OK")
+
+    elif command == "GET" and len(parts) >= 2:
+        key = parts[1]
+        if not contains(key):
+            bloom_misses += 1
+            out.append("BLOOM_MISS")
+        elif key in cache:
+            hits += 1
+            out.append(f"HIT {cache[key]}")
         else:
-            out.append(",".join(map(str, indexes(element))))
+            misses += 1
+            bloom_fp += 1
+            out.append("MISS_BLOOM_FP")
 
-    elif command == "FILTERLOAD":
-        out.append(filterload_payload().hex())
+    elif command == "INVALIDATE" and len(parts) >= 2:
+        cache.pop(parts[1], None)
+        out.append("OK")
+
+    elif command == "REBUILD":
+        bits = bytearray(bit_count)
+        for key in cache:
+            insert(key)
+        out.append(f"OK rebuilt={len(cache)}")
+
+    elif command == "FILL":
+        out.append(f"{current_fill():.4f}")
+
+    elif command == "STATS":
+        out.append(
+            f"hits={hits} misses={misses} "
+            f"bloom_misses={bloom_misses} bloom_fp={bloom_fp}"
+        )
 
 sys.stdout.write("\n".join(out) + ("\n" if out else ""))

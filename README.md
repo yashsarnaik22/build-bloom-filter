@@ -54,6 +54,49 @@ So treat `main.py` as the file for the lesson you're grading: when you move on, 
 
 When a lesson genuinely does build on the previous one, its own text says so and its tests will pass with the earlier behaviour still in place.
 
+## Reusing this project in another application
+
+Anyone can clone this repository and run it with Python 3; it has no third-party dependencies. The current `main.py` is a command-line learning exercise, not an installable library, plugin, or Java `.jar`. It cannot be injected into a JVM as-is. A Java application (or another language) can launch Python as a separate process, but that is process integration, not jar injection.
+
+The program reads a complete command sequence from standard input and prints its replies after input ends. For example, from this repository:
+
+```sh
+python3 main.py <<'EOF'
+INIT 100 0.01
+PUT_CACHE user:42 Alice Smith
+GET user:42
+INVALIDATE user:42
+GET user:42
+REBUILD
+GET user:42
+STATS
+EOF
+```
+
+An application can send the same batch through a subprocess. In Python:
+
+```python
+import subprocess
+import sys
+
+commands = """\
+INIT 100 0.01
+PUT_CACHE user:42 Alice Smith
+GET user:42
+STATS
+"""
+result = subprocess.run(
+    [sys.executable, "main.py"],
+    input=commands,
+    text=True,
+    capture_output=True,
+    check=True,
+)
+print(result.stdout)
+```
+
+Java can use `ProcessBuilder` to launch `python3 main.py`, write commands to the process's standard input, close the input stream, and read the replies from standard output. This command-line interface is batch-oriented: its cache and filter live only for that run. For a long-lived service or direct imports, extract the filter/cache logic into an importable Python module or expose it through a service API. To use it as a Java library, it would need a Java implementation packaged as a `.jar`.
+
 ## If the course gets updated
 
 Courses improve over time — exercises get added, tests get fixed. If the [course page](https://shipthatcode.com/courses/build-bloom-filter) says your starter is out of date: download a fresh zip, **delete this repo's `tests/` folder entirely**, copy in the fresh `tests/` and `.shipthatcode.json`, and keep your own code exactly as it is. (Don't merge test folders — lesson numbering can shift between versions.) Lessons you've already completed stay completed either way.
