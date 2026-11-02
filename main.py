@@ -1,41 +1,33 @@
+import math
 import sys
 
-# Bloom filters compose elegantly under bitwise operations
-# (only when m, k, and the hash family are IDENTICAL).
-#
-#   UNION(A, B)         = A | B          # exact: matches "in A or in B"
-#   INTERSECT(A, B)     = A & B          # APPROXIMATE: matches "probably in A AND probably in B"
-#                                         # FP rate of intersection is HIGHER than each operand.
-#
-# Commands:
-#   INIT <name> <m> <k>                  -> "OK"
-#   ADD <name> <string>                  -> "OK"
-#   CHECK <name> <string>                -> "MAYBE"|"NO"
-#   UNION <out> <a> <b>                  -> "OK"   (bitwise OR of bit arrays)
-#   INTERSECT <out> <a> <b>              -> "OK"   (bitwise AND of bit arrays)
-#   POPCOUNT <name>                      -> total bits set
-#   BITS <name>                          -> the bit array as a "0101..." string
-#   ESTIMATE <name>                      -> estimated number of distinct keys
+MASK32 = 0xFFFFFFFF
+LN2 = 0.6931471805599453
+LN2SQ = 0.4804530139182014
+MAX_FILTER_BYTES = 36000
+MAX_HASHES = 50
+SEED_STEP = 0xFBA4C795
 
-table = []
-m = 0
-k = 0
+filter_bytes = bytearray()
+hash_count = 0
+tweak = 0
+flags = 0
 out = []
 
-MASK32 = 0xFFFFFFFF
-MAXC = 15
 
 def rotl32(value, amount):
     value &= MASK32
     return ((value << amount) | (value >> (32 - amount))) & MASK32
 
-def murmur3_32(s, seed):
-    data = s.encode()
+
+def murmur3_32(data, seed):
+    """MurmurHash3 x86_32 over bytes, with all arithmetic kept to 32 bits."""
     h = seed & MASK32
     c1 = 0xCC9E2D51
     c2 = 0x1B873593
 
-    for offset in range(0, len(data) - len(data) % 4, 4):
+    complete_length = len(data) - len(data) % 4
+    for offset in range(0, complete_length, 4):
         block = int.from_bytes(data[offset:offset + 4], "little")
         block = (block * c1) & MASK32
         block = rotl32(block, 15)
@@ -44,7 +36,7 @@ def murmur3_32(s, seed):
         h = rotl32(h, 13)
         h = (h * 5 + 0xE6546B64) & MASK32
 
-    tail = data[len(data) - len(data) % 4:]
+    tail = data[complete_length:]
     if tail:
         block = int.from_bytes(tail, "little")
         block = (block * c1) & MASK32
@@ -60,26 +52,52 @@ def murmur3_32(s, seed):
     h ^= h >> 16
     return h & MASK32
 
-def h_a(s):
-    return murmur3_32(s, 0)
 
-def h_b(s):
-    return murmur3_32(s, 0x9747B28C)
+def indexes(element):
+    bit_count = len(filter_bytes) * 8
+    if bit_count == 0:
+        return []
 
-def positions(s, m, k):
-    return [(h_a(s) + i * h_b(s)) % m for i in range(k)]
+    result = []
+    for i in range(hash_count):
+        seed = (i * SEED_STEP + tweak) & MASK32
+        result.append(murmur3_32(element, seed) % bit_count)
+    return result
 
-def argument_after_command(line):
-    """Return the exact argument text after the command and one space."""
-    i = 0
-    while i < len(line) and line[i].isspace():
-        i += 1
-    while i < len(line) and not line[i].isspace():
-        i += 1
-    return line[i + 1:] if i < len(line) else ""
 
-def key_positions(key):
-    return positions(key, m, k)
+def insert(element):
+    for bit_index in indexes(element):
+        filter_bytes[bit_index // 8] |= 1 << (bit_index % 8)
+
+
+def contains(element):
+    return all(
+        filter_bytes[bit_index // 8] & (1 << (bit_index % 8))
+        for bit_index in indexes(element)
+    )
+
+
+def compact_size(value):
+    if value < 253:
+        return bytes((value,))
+    return b"\xfd" + value.to_bytes(2, "little")
+
+
+def filterload_payload():
+    return (
+        compact_size(len(filter_bytes))
+        + bytes(filter_bytes)
+        + hash_count.to_bytes(4, "little")
+        + tweak.to_bytes(4, "little")
+        + bytes((flags,))
+    )
+
+
+def element_after_command(line):
+    command_end = 0
+    while command_end < len(line) and not line[command_end].isspace():
+        command_end += 1
+    return bytes.fromhex(line[command_end:].strip()) if command_end < len(line) else b""
 
 
 for raw in sys.stdin:
@@ -87,64 +105,41 @@ for raw in sys.stdin:
     if not line.strip():
         continue
 
-    parts = line.split(maxsplit=1)
-    cmd = parts[0]
+    parts = line.split()
+    command = parts[0]
 
-    if cmd == "INIT":
-        args = line.split()
-        if len(args) != 3:
+    if command == "INIT":
+        if len(parts) != 5:
             continue
 
-        m = int(args[1])
-        k = int(args[2])
+        n = int(parts[1])
+        error_rate = float(parts[2])
+        tweak = int(parts[3]) & MASK32
+        flags = int(parts[4]) & 0xFF
 
-        if m <= 0 or k <= 0:
-            continue
+        bit_count = min(
+            math.trunc((-1.0 / LN2SQ) * n * math.log(error_rate)),
+            MAX_FILTER_BYTES * 8,
+        )
+        byte_count = bit_count // 8
+        hash_count = min(
+            math.trunc(((byte_count * 8) // n) * LN2),
+            MAX_HASHES,
+        )
+        filter_bytes = bytearray(byte_count)
+        out.append(f"OK bytes={byte_count} hashes={hash_count}")
 
-        table = [0] * m
-        out.append("OK")
+    elif command in ("INSERT", "CONTAINS", "INDEXES"):
+        element = element_after_command(line)
+        if command == "INSERT":
+            insert(element)
+            out.append("OK")
+        elif command == "CONTAINS":
+            out.append("MAYBE" if contains(element) else "NO")
+        else:
+            out.append(",".join(map(str, indexes(element))))
 
-    elif cmd == "ADD":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        for p in key_positions(key):
-            table[p] = min(table[p] + 1, 15)
-
-        out.append("OK")
-
-    elif cmd == "CHECK":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        out.append("MAYBE" if all(table[p] > 0 for p in key_positions(key)) else "NO")
-
-    elif cmd == "REMOVE":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        pos = key_positions(key)
-        if any(table[p] == 0 for p in pos):
-            out.append("WAS_ABSENT")
-            continue
-
-        for p in pos:
-            if table[p] < 15:
-                table[p] -= 1
-        out.append("OK")
-
-    elif cmd == "COUNT":
-        if not table:
-            continue
-
-        key = argument_after_command(line)
-        out.append(str(min(table[p] for p in key_positions(key))))
-
-    elif cmd == "DUMP":
-        if table:
-            out.append("".join(format(value, "x") for value in table))
+    elif command == "FILTERLOAD":
+        out.append(filterload_payload().hex())
 
 sys.stdout.write("\n".join(out) + ("\n" if out else ""))
