@@ -1,28 +1,31 @@
 import math
 import sys
 
-MASK32 = 0xFFFFFFFF
-LN2 = 0.6931471805599453
-LN2SQ = 0.4804530139182014
-MAX_FILTER_BYTES = 36000
-MAX_HASHES = 50
-SEED_STEP = 0xFBA4C795
 
-filter_bytes = bytearray()
+MASK32 = 0xFFFFFFFF
+LN2 = math.log(2.0)
+LN2_SQUARED = LN2 * LN2
+
+bit_count = 0
 hash_count = 0
-tweak = 0
-flags = 0
+capacity = 0
+target_fp = 0.0
+bits = []
+added_count = 0
+probe_count = 0
+false_positive_count = 0
 out = []
 
 
-def rotl32(value, amount):
+def rotate_left_32(value, amount):
     value &= MASK32
     return ((value << amount) | (value >> (32 - amount))) & MASK32
 
 
-def murmur3_32(data, seed):
-    """MurmurHash3 x86_32 over bytes, with all arithmetic kept to 32 bits."""
-    h = seed & MASK32
+def murmur3_32(value, seed):
+    """MurmurHash3 x86_32, with arithmetic kept to 32 bits."""
+    data = value.encode("utf-8")
+    result = seed & MASK32
     c1 = 0xCC9E2D51
     c2 = 0x1B873593
 
@@ -30,74 +33,73 @@ def murmur3_32(data, seed):
     for offset in range(0, complete_length, 4):
         block = int.from_bytes(data[offset:offset + 4], "little")
         block = (block * c1) & MASK32
-        block = rotl32(block, 15)
+        block = rotate_left_32(block, 15)
         block = (block * c2) & MASK32
-        h ^= block
-        h = rotl32(h, 13)
-        h = (h * 5 + 0xE6546B64) & MASK32
+        result ^= block
+        result = rotate_left_32(result, 13)
+        result = (result * 5 + 0xE6546B64) & MASK32
 
     tail = data[complete_length:]
     if tail:
         block = int.from_bytes(tail, "little")
         block = (block * c1) & MASK32
-        block = rotl32(block, 15)
+        block = rotate_left_32(block, 15)
         block = (block * c2) & MASK32
-        h ^= block
+        result ^= block
 
-    h ^= len(data)
-    h ^= h >> 16
-    h = (h * 0x85EBCA6B) & MASK32
-    h ^= h >> 13
-    h = (h * 0xC2B2AE35) & MASK32
-    h ^= h >> 16
-    return h & MASK32
+    result ^= len(data)
+    result ^= result >> 16
+    result = (result * 0x85EBCA6B) & MASK32
+    result ^= result >> 13
+    result = (result * 0xC2B2AE35) & MASK32
+    result ^= result >> 16
+    return result & MASK32
 
 
-def indexes(element):
-    bit_count = len(filter_bytes) * 8
-    if bit_count == 0:
+def positions(value):
+    if bit_count <= 0:
         return []
-
-    result = []
-    for i in range(hash_count):
-        seed = (i * SEED_STEP + tweak) & MASK32
-        result.append(murmur3_32(element, seed) % bit_count)
-    return result
-
-
-def insert(element):
-    for bit_index in indexes(element):
-        filter_bytes[bit_index // 8] |= 1 << (bit_index % 8)
+    base_a = murmur3_32(value, 0)
+    base_b = murmur3_32(value, 0x9747B28C)
+    return [
+        (base_a + index * base_b) % bit_count
+        for index in range(hash_count)
+    ]
 
 
-def contains(element):
-    return all(
-        filter_bytes[bit_index // 8] & (1 << (bit_index % 8))
-        for bit_index in indexes(element)
-    )
+def add(value):
+    global added_count
+    for position in positions(value):
+        bits[position] = 1
+    added_count += 1
 
 
-def compact_size(value):
-    if value < 253:
-        return bytes((value,))
-    return b"\xfd" + value.to_bytes(2, "little")
+def contains(value):
+    return all(bits[position] for position in positions(value))
 
 
-def filterload_payload():
-    return (
-        compact_size(len(filter_bytes))
-        + bytes(filter_bytes)
-        + hash_count.to_bytes(4, "little")
-        + tweak.to_bytes(4, "little")
-        + bytes((flags,))
-    )
+def current_fill():
+    return (sum(bits) / bit_count) if bit_count else 0.0
 
 
-def element_after_command(line):
-    command_end = 0
-    while command_end < len(line) and not line[command_end].isspace():
-        command_end += 1
-    return bytes.fromhex(line[command_end:].strip()) if command_end < len(line) else b""
+def theoretical_fp():
+    if bit_count <= 0 or hash_count <= 0:
+        return 0.0
+    return (1.0 - math.exp(-hash_count * added_count / bit_count)) ** hash_count
+
+
+def estimated_keys():
+    fill = current_fill()
+    if fill >= 1.0:
+        return None
+    if fill <= 0.0 or hash_count <= 0:
+        return 0
+    return round(-(bit_count / hash_count) * math.log1p(-fill))
+
+
+def argument_after_command(line):
+    split_at = line.find(" ")
+    return line[split_at + 1:].strip() if split_at >= 0 else ""
 
 
 for raw in sys.stdin:
@@ -108,38 +110,62 @@ for raw in sys.stdin:
     parts = line.split()
     command = parts[0]
 
-    if command == "INIT":
-        if len(parts) != 5:
+    if command == "INIT" and len(parts) == 3:
+        capacity = int(parts[1])
+        target_fp = float(parts[2])
+        if capacity <= 0 or not 0.0 < target_fp < 1.0:
             continue
 
-        n = int(parts[1])
-        error_rate = float(parts[2])
-        tweak = int(parts[3]) & MASK32
-        flags = int(parts[4]) & 0xFF
+        bit_count = math.ceil(-capacity * math.log(target_fp) / LN2_SQUARED)
+        hash_count = max(1, round((bit_count / capacity) * LN2))
+        bits = [0] * bit_count
+        added_count = 0
+        probe_count = 0
+        false_positive_count = 0
+        out.append(f"OK m={bit_count} k={hash_count}")
 
-        bit_count = min(
-            math.trunc((-1.0 / LN2SQ) * n * math.log(error_rate)),
-            MAX_FILTER_BYTES * 8,
-        )
-        byte_count = bit_count // 8
-        hash_count = min(
-            math.trunc(((byte_count * 8) // n) * LN2),
-            MAX_HASHES,
-        )
-        filter_bytes = bytearray(byte_count)
-        out.append(f"OK bytes={byte_count} hashes={hash_count}")
+    elif command == "ADD" and len(parts) >= 2:
+        add(argument_after_command(line))
+        out.append("OK")
 
-    elif command in ("INSERT", "CONTAINS", "INDEXES"):
-        element = element_after_command(line)
-        if command == "INSERT":
-            insert(element)
-            out.append("OK")
-        elif command == "CONTAINS":
-            out.append("MAYBE" if contains(element) else "NO")
+    elif command == "PROBE" and len(parts) >= 2:
+        value = argument_after_command(line)
+        probe_count += 1
+        if contains(value):
+            false_positive_count += 1
+        out.append("OK")
+
+    elif command == "LOAD":
+        load = added_count / capacity if capacity else 0.0
+        out.append(f"{load:.4f}")
+
+    elif command == "FILL":
+        out.append(f"{current_fill():.4f}")
+
+    elif command == "ACTUAL_FP":
+        measured = false_positive_count / probe_count if probe_count else 0.0
+        out.append(f"{measured:.4f}")
+
+    elif command == "THEORETICAL_FP":
+        out.append(f"{theoretical_fp():.4f}")
+
+    elif command == "ESTIMATE":
+        estimate = estimated_keys()
+        out.append("FULL" if estimate is None else str(estimate))
+
+    elif command == "HEALTHY":
+        reasons = []
+        load = added_count / capacity if capacity else 0.0
+        if load > 1.0:
+            reasons.append("OVER_CAPACITY")
+        measured = false_positive_count / probe_count if probe_count else 0.0
+        if probe_count >= 10 and measured > 2.0 * target_fp:
+            reasons.append("FP_TOO_HIGH")
+        if not reasons:
+            out.append("HEALTHY")
+        elif len(reasons) == 1:
+            out.append(f"DEGRADED {reasons[0]}")
         else:
-            out.append(",".join(map(str, indexes(element))))
-
-    elif command == "FILTERLOAD":
-        out.append(filterload_payload().hex())
+            out.append("DEGRADED " + ",".join(reasons))
 
 sys.stdout.write("\n".join(out) + ("\n" if out else ""))
