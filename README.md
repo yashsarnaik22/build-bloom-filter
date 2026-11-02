@@ -1,7 +1,5 @@
 # Build a Bloom Filter
 
-[![shipthatcode — Build a Bloom Filter](https://api.shipthatcode.com/cert/e717bcaf13f52efe1b94c409bfcef9fb.svg)](https://shipthatcode.com/courses/build-bloom-filter)
-
 My working repo for [Build a Bloom Filter](https://shipthatcode.com/courses/build-bloom-filter) on [shipthatcode.com](https://shipthatcode.com) — built lesson by lesson in my own editor.
 
 ## What you need
@@ -96,6 +94,7 @@ print(result.stdout)
 ```
 
 Java can use `ProcessBuilder` to launch `python3 main.py`, write commands to the process's standard input, close the input stream, and read the replies from standard output. This command-line interface is batch-oriented: its cache and filter live only for that run. For a long-lived service or direct imports, extract the filter/cache logic into an importable Python module or expose it through a service API. To use it as a Java library, it would need a Java implementation packaged as a `.jar`.
+[![shipthatcode — Build a Bloom Filter](https://api.shipthatcode.com/cert/e717bcaf13f52efe1b94c409bfcef9fb.svg)](https://shipthatcode.com/courses/build-bloom-filter)
 
 ## If the course gets updated
 
